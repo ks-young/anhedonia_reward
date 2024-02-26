@@ -1,0 +1,591 @@
+---
+title: "Models"
+author: "Liv Tollånes"
+date: "2023-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## 2. Multilevel modelling of reward anticipation and self reports of pleasure and experience of reward
+Q: Does lab-measured reward anticipation (averaged EEfRT scores) predict self-reported (i) "anticipated reward pleasure" (ii) "experienced reward" in the real world (ESM)? 
+
+
+```{r}
+#Loading packages 
+
+pacman::p_load("tidyverse", "ggpubr", "Hmisc", "corrplot", "rstatix", "psych", "nlme", "lme4", "lmerTest", "JWileymisc","multilevelTools", "texreg", "ordinal", "GGally", "rcompanion", "brant", "ggally", "animation")
+
+#ordinal: creating regression models for ordinal data
+#rcompanion: test R squared
+# brant: test for proportional odds
+
+#install.packages("shinydashboard")
+library("plotly", "shinycssloaders","shinydashboard")
+
+
+#remotes::install_github("gertstulp/ESMvis")
+
+
+```
+
+```{r}
+#Loading ESM data
+
+ ESM <- read.csv("/Users/katherineyoung/Documents/SilverCloud docs/IMC_reward_sensitivity-master/data/ESM_reduced2.csv")
+ ESM_keys <- read.csv("/Users/katherineyoung/Documents/SilverCloud docs/IMC_reward_sensitivity-master/data/ESM_keys.csv")
+ 
+ unique(ESM$Actual_ID) # P022 was never there from the beginning
+ 
+ ### Removing the excluded rows for low participation
+ 
+#Are there still 2-s in the column?
+ESM$Excluded.for.Low.Participation..1...no..2...yes. <-  as.factor(ESM$Excluded.for.Low.Participation..1...no..2...yes.)
+is.factor(ESM$Excluded.for.Low.Participation..1...no..2...yes.)
+unique(ESM$Excluded.for.Low.Participation..1...no..2...yes.)
+
+#keeping an overview of what participants were removed - for matching with the CBM df
+ESM_exluded_low_part <- filter(ESM, Excluded.for.Low.Participation..1...no..2...yes. == "2")
+ESM_exluded_low_part_ID <- unique(ESM_exluded_low_part$Actual_ID) #The IDs removed are P010, P019, P020, P028, P038, P041, P049, P506, P513
+
+#Removing from main df
+ESM <- filter(ESM, Excluded.for.Low.Participation..1...no..2...yes. != "2")
+unique(ESM$Excluded.for.Low.Participation..1...no..2...yes.)
+
+length(unique(ESM$Actual_ID)) #There are 67 unique participants in this df
+
+
+
+##############################
+#CBM data set
+CBM <- read.csv("/Users/katherineyoung/Documents/SilverCloud docs/IMC_reward_sensitivity-master/data/preprocessed.csv")
+CBM_vars <- read.csv("/Users/katherineyoung/Documents/SilverCloud docs/IMC_reward_sensitivity-master/data/CBM_variables.csv")
+
+length(unique(CBM$ID)) #There are 79 unique IDs - 12 more than in the ESM data
+
+#Replace weird column values with NA
+CBM[CBM  == "#NULL!"] <- NA
+
+
+#Selecting only the relevant columns in the CBM data for better overview
+CBM_sub <- CBM %>% select(c(1:7),
+                          EEfRT_averaged_lowp,
+                          EEfRT_averaged_medp,
+                          EEfRT_averaged_highp,
+                          EEfRT_LowProb_DiffScore,
+                          EEfRT_MedProb_DiffScore,
+                          EEfRT_HighProb_DiffScore,
+                          POSCBMTrainingaccuracy,
+                          POSCBMTestingaccuracy,
+                          NEGCBMTrainingaccuracy,
+                          NEGCBMTestingaccuracy,
+                          RT_POS_TRAINING_IDX,
+                          RT_NEG_TRAINING_IDX,
+                          RT_Diff_Score,
+                          TEPS_ANT, TEPS_CON, MASQ_AA, MASQ_GD, MASQ_AD,  BAS_Drive, BAS_FS,BAS_RR, BIS, PHQ_TOTAL)
+
+CBM_sub$exclude <- NULL
+CBM_sub$participant_id <- NULL
+
+#REVERSE SCORE ANHEDONIA
+CBM_sub$MASQ_AD <- 40 - (CBM_sub$MASQ_AD - 10)
+
+# 16 participants have NAs in their EEfRT columns - due to lacking EEfRT scores
+
+ #Removing the participants not included in the ESM df first to inspect what IDs are left
+CBM_sub <- filter(CBM_sub, ID != "P010")
+CBM_sub <- filter(CBM_sub, ID != "P019")
+CBM_sub <- filter(CBM_sub, ID != "P020")
+CBM_sub <- filter(CBM_sub, ID != "P028")
+CBM_sub <- filter(CBM_sub, ID != "P038")
+CBM_sub <- filter(CBM_sub, ID != "P041")
+CBM_sub <- filter(CBM_sub, ID != "P049")
+CBM_sub <- filter(CBM_sub, ID != "P506")
+CBM_sub <- filter(CBM_sub, ID != "P513")
+
+length(unique(CBM_sub$ID)) #Length is now 70, but 12 problematic participants are left. Only 4 of those removed were NA-participants
+
+# Looking into the original df for these participants - what is the issue?
+#The problematic IDs are: P003, P024, P036, P501, P509, P510, P512, P515, P525, P526, P535, P536
+probID <- subset(CBM, ID %in% c("P003", "P024", "P036", "P501", "P509", "P510", "P512", "P515", "P525", "P526", "P535", "P536"))
+
+
+#Further inspection shows that the problematic IDs are caused by NAs in the various prob categories of the EEfRT measurements - so incomplete CBM data. Removing all of them
+CBM_sub <- CBM_sub %>% filter(!ID %in% c("P003", "P024", "P036", "P501", "P509", "P510","P512", "P515", "P525", "P526", "P535", "P536")) #The resulting df
+
+#Unique IDs in the subsetted CBM data
+length(unique(CBM_sub$ID)) #The resulting df now has 58 unique participants. There were 67 in the ESM data.
+CBM_sub_unique_IDs <- unique(CBM_sub$ID)
+
+#Looking at which IDS in the ESM df do not occur in the CBM df
+unique(ESM$Actual_ID)
+
+unique(CBM_sub$ID)
+
+#The IDs that occur in the ESM data but not in the CBM data are:
+#P024, P036, P501, P509, P512, P525, P526, P535, P536 (9 in total)
+
+#Removing them from the ESM data:
+ESM <- ESM %>% filter(!Actual_ID %in% c("P003","P024", "P036", "P501", "P509", "P512", "P525", "P526", "P535", "P536"))
+
+unique(ESM$Actual_ID)
+
+unique(CBM_sub$ID)
+
+#P022 is in CBM sub - but was never there for ESM. Removing P022 from CBM_sub
+CBM_sub <- CBM_sub %>% filter(!ID %in% "P022")
+
+length(unique(ESM$Actual_ID))
+length(unique(CBM_sub$ID)) #The two dfs are now equal
+
+
+```
+
+
+
+```{r}
+#The next task is to add three EEfRT columns to the ESM data frame, replicating their scores across each row every partipant has
+#Rename Actual_ID in ESM df to ID
+ESM <- ESM %>% rename(ID = Actual_ID)
+
+#Creating a merged column of subject and day
+ESM$subj_day <- paste(ESM$ID, ESM$Day)
+
+#Merging the two dfs
+ESM_merged <- merge(ESM, CBM_sub, all.x=TRUE, by="ID")
+ESM_merged <- as_tibble(ESM_merged)
+
+#reordering columns for better overview
+ESM_merged <- ESM_merged  %>% relocate(subj_day, .after=Day)
+ESM_merged <- ESM_merged  %>% relocate(Excluded.for.Low.Participation..1...no..2...yes., .after=BIS)
+ESM_merged <- ESM_merged  %>% relocate(StartDate, .after=Excluded.for.Low.Participation..1...no..2...yes.)
+ESM_merged <- ESM_merged  %>% relocate(Nationality, .after=StartDate)
+
+
+mergeddf <- write.csv(ESM_merged, "./data/ESM_CBM_merged")
+
+```
+
+
+
+Variable types:
+- Outcome/dependent variables (ant/con. pleasure) are ordinal (measured on 7 pt. Likert scale)
+- Predictors: EEfRT averages are ratios. Between 0 and 1
+
+
+# Inspecting the distributions of the data 
+
+## Outcome measures
+```{r}
+ESM_merged <- read.csv("./data/ESM_CBM_merged")
+
+#1. Distribution of experienced and anticipated pleasure scores - We observe that the two outcome variables have similar distribution across Likert-options
+hist(ESM_merged$AntPleasure, col = 'coral2')
+hist(ESM_merged$ConPleasure, col = 'steelblue')
+hist(ESM_merged$InterestFutAct)
+
+
+#Looking into exact summaries per pleasure score 
+# The total distributions are very even across the two measures
+Ant_pl <- ESM_merged %>%
+  group_by(AntPleasure) %>%
+  summarise(counts = n())
+
+Con_pl <- ESM_merged %>%
+  group_by(ConPleasure) %>%
+  summarise(counts = n())
+
+Interest <- ESM_merged %>%
+  group_by(InterestFutAct) %>%
+  summarise(counts = n())
+
+
+Ant_pl
+Con_pl
+Interest
+
+
+#Relationship between the two outcome variables - Are they correlated? (Colour by ID or Day)
+#Inspection of the plot shows us that the two outcome measures most likely are correlated, with the spread of scores also being equal to each side from the midline. Seems to be relatively even across participants and days
+ggplot(ESM_merged, aes(x=AntPleasure, y=ConPleasure, colour = ID)) + geom_point() + geom_jitter() + ggtitle("Relation between the two outcome variables")
+
+```
+
+We see that the responses for the two outcome variables, anticipated and experienced pleasure, most likely are correlated. There is a linear relationship with similar spread to each side. We also observe that there is a heavier weight of responses in the higher response categories. 
+
+
+
+## Predictors
+```{r}
+#Distribution of proportions according to reward probability 
+hist(ESM_merged$EEfRT_averaged_lowp, col = 'coral2') # When the probability of reward is low, the general tendency is for people to not make very much effort (low proportions of people chose the hard task)
+hist(ESM_merged$EEfRT_averaged_medp, col = 'green') # When the probability of reward is medium, there is a tendency that 50/50 chooses either the hard or the low task
+hist(ESM_merged$EEfRT_averaged_highp, col = 'blue') #When the probability of reward is high, there is a tendency that most people choose the hard task
+
+
+hist(ESM_merged$BAS_Drive)
+hist(ESM_merged$BAS_FS)
+hist(ESM_merged$BAS_RR)
+
+
+#Are the predictors correlated?
+ ggplot(ESM_merged, aes(x=EEfRT_averaged_medp, y=EEfRT_averaged_lowp, colour = ID)) + geom_point() + geom_smooth(method = "lm", colour = 'red')
+ggplot(ESM_merged, aes(x=EEfRT_averaged_medp, y=EEfRT_averaged_highp, colour = ID)) + geom_point() + geom_smooth(method = "lm", colour = 'red') # Strongest relationship between medium and ghigh
+ggplot(ESM_merged, aes(x=EEfRT_averaged_lowp, y=EEfRT_averaged_highp, colour = ID)) + geom_point() + geom_smooth(method = "lm", colour = 'red')
+
+```
+
+## Comments on the plots above 
+1. Proportions according to probability category
+- (Red histogram plot) When the probability of reward is low, the general tendency is for people to not make very much effort. this is reflected in the left skewed plot. 
+- (Green histogram plot) When the probability of reward is medium, there is a tendency that 50/50 chooses either the hard or the low task. This is reflected in the almost bell shaped curve, centered at around .5. 
+- (Blue Histogram Plot): When the probability of reward is high, there is a tendency that most people choose the hard task - as reflected in the right skewed graph
+
+
+2. Correlation of predictors
+The three plots confirms what was found in the correlation analysis - there seems to be some degree of positive correlations between the low and medium probability categhory, and between the medium and high probability categories. High and low do not seem to be correlated. 
+
+
+# Individual trajectories - Distribution of the proportion of hard tasks choses in the three probability categories
+
+```{r}
+# #From long to wide data
+library(tidyr)
+wide <- ESM_merged %>% pivot_longer(cols=c('EEfRT_averaged_lowp', 'EEfRT_averaged_medp', 'EEfRT_averaged_highp'),
+                    names_to='prob_cond',
+                    values_to='Hard_task_proportion')
+
+
+#Add new column with dummy variables for the probability condition
+# Create dummy variables for 2 columns
+wide$dummy_prob_group <- NA
+wide$dummy_prob_group[wide$prob_cond == "EEfRT_averaged_lowp"] <- 1
+wide$dummy_prob_group[wide$prob_cond == "EEfRT_averaged_medp"] <- 2
+wide$dummy_prob_group[wide$prob_cond == "EEfRT_averaged_highp"] <- 3
+
+# unique(wide$dummy_prob_group) We have the correct dummy variables
+
+
+# Create a line plot with all conditions in one - to see pattern differences. lines represent individual trajectories
+ggplot(wide, aes(x = dummy_prob_group, y = Hard_task_proportion, color = ID)) + geom_line() +
+  scale_x_continuous(breaks = seq(1, 3, by = 1)) + xlab("Probability group") + ggtitle("Proportion of hard tasks chosen in the three probability categories") + theme(legend.position="none")
+
+
+```
+We see that the proprotion of hard tasks chosen generally increase as the probability of reward increases
+
+
+# Distributions across Likert options and days
+```{r}
+# Inspect the distribution of anticipated pleasure and experienced pleasure across days for each participant
+ggplot(ESM_merged, aes(x = AntPleasure, color = ID)) + geom_jitter(stat="count") +
+  scale_x_continuous(breaks = seq(1, 7, by = 1)) + facet_wrap(~Day) + labs(title = "Anticipated Pleasure",
+       subtitle = "(Visualised per day of measurement across IDs)", y = "Count", x = "Anticipated Pleasure - 7 pt. Likert Scale") + 
+  theme_bw() + theme(legend.position="none")
+
+
+ggplot(ESM_merged, aes(x = ConPleasure, color = ID)) + geom_jitter(stat="count") +
+  scale_x_continuous(breaks = seq(1, 7, by = 1)) + facet_wrap(~Day) + labs(title = "Experienced Pleasure",
+       subtitle = "(Visualised per day of measurement)",
+       y = "Count", x = "Experienced Pleasure - 7 pt. Likert Scale") + theme_bw() + theme(legend.position="none")
+
+
+#Centering and scaling the two outcome variables
+#Adding a z-score column to the data frame for the pleasure scores (scaling)
+ESM_merged$ConPleasure_Z <- scale(ESM_merged$ConPleasure, center = T, scale = T)
+ESM_merged$AntPleasure_Z <- scale(ESM_merged$AntPleasure, center = T, scale = T)
+
+#Mean-Centering the outcome variables
+ESM_merged$ConPleasure_centered <- scale(ESM_merged$ConPleasure, center = T, scale = F)
+ESM_merged$AntPleasure_centered <- scale(ESM_merged$AntPleasure, center = T, scale = F)
+
+#Visualising the z-scored and centered outcome variables as distributions per participant
+
+# Uncentered
+ggplot(ESM_merged, aes(ConPleasure)) + geom_density(aes(x=ConPleasure, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none") + ggtitle("Experienced Pleasure - Uncentered") + scale_x_continuous(breaks = seq(1, 7, by = 1))
+
+ggplot(ESM_merged, aes(AntPleasure)) + geom_density(aes(x=AntPleasure, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none") + ggtitle("Anticipated Pleasure - Uncentered") + scale_x_continuous(breaks = seq(1, 7, by = 1))
+
+
+#Z-scored
+ggplot(ESM_merged, aes(ConPleasure_Z)) + geom_density(aes(x=ConPleasure_Z, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none") + ggtitle("Experienced Pleasure - Z-scored") 
+
+ggplot(ESM_merged, aes(AntPleasure_Z)) + geom_density(aes(x=AntPleasure_Z, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none") + ggtitle("Anticipated Pleasure - Z-scored") 
+
+#Mean centered
+ggplot(ESM_merged, aes(ConPleasure_centered)) + geom_density(aes(x=ConPleasure_centered, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none")+ ggtitle("Experienced Pleasure - Population Mean Centered") 
+
+ggplot(ESM_merged, aes(AntPleasure_centered)) + geom_density(aes(x=AntPleasure_centered, y=..density.., color = ID), bins=50) + facet_wrap(~ID) + theme(legend.position="none")+ ggtitle("Anticipated Pleasure - Population Mean Centered") 
+
+
+# experienced pleasure over time
+ggplot(ESM_merged, aes(x = Day, y = AntPleasure_Z))  + theme(legend.position="none") + 
+#  facet_wrap(~ID) + 
+  geom_smooth(se = TRUE, span = 0.2, method = "loess") +
+  ggtitle("Anticipated Pleasure - Z-scored") 
+
+ggplot(ESM_merged, aes(x = Day, y = ConPleasure_Z))  + theme(legend.position="none") + 
+  #geom_line() + 
+  geom_smooth(se = FALSE, span = 0.2, method = "loess") +
+  ggtitle("Experienced Pleasure - Z-scored") 
+
+ggplot(ESM_merged, aes(ConPleasure_centered)) + geom_density(aes(x=ConPleasure_centered, y=..density.., color = Day), bins=50) + facet_wrap(~Day) + theme(legend.position="none")+ ggtitle("Experienced Pleasure - Population Mean Centered") 
+
+
+
+```
+The two first plots indicate that the response pattern does not vary much between days. The same response pattern is found between the two pleasure measures, with a tendency for all participants to have more responses in the positive end of the Likert-scale. (5-7)
+
+The next three groups of plots give us more detailed information regarding individual distributions of scores throughout the week of measurements. (NB. The uncentered plot is likely to be more useful, as the scale simply represents the Likert options). Despite different scales on the y-axis for anticipated and ecperienced pleasure (probably due to differences in amounts of responses), there seems to be very similar patterns/curvature of individual distributions for the two mesures. 
+```{r ant and con on same graph}
+
+ESM_merged_long <-  ESM_merged %>%
+  pivot_longer(c(AntPleasure, ConPleasure), names_to = "measure", values_to = "score")
+
+ggplot(ESM_merged_long, aes( x = score, color = measure))  + theme(legend.position="none") + 
+  geom_bar() + 
+  #geom_smooth(se = TRUE, span = 0.2, method = "loess") +
+  facet_grid(~Day) + 
+  ggtitle("Ant &  Con Pleasure - Z-scored") + 
+  theme(legend.position="right")
+
+ggplot(ESM_merged, aes( x = AntPleasure_centered, y = ConPleasure_centered)) + 
+  #geom_point() + 
+  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95) + 
+  #geom_smooth(se = TRUE, span = 0.2, method = "loess") +
+  facet_grid(~Day) + 
+  ggtitle("Ant &  Con Pleasure - Z-scored") + 
+#  theme(legend.position="right") + 
+  theme_minimal()
+
+ggplot(ESM_merged_long, aes( y = score, color = measure)) + 
+  #geom_point() + 
+#  geom_smooth(method="auto", se=TRUE, fullrange=FALSE, level=0.95) + 
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=2, notch=FALSE) +
+  #geom_smooth(se = TRUE, span = 0.2, method = "loess") +
+  facet_grid(~Day) + 
+  ggtitle("Ant &  Con Pleasure - Z-scored") + 
+#  theme(legend.position="right") + 
+  scale_color_brewer(palette="Dark2") + 
+  theme_classic2()
+
+```
+
+# LIKERT plots
+```{r likert}
+
+library(tidyr)
+#install.packages("ggridges")
+library(likert)
+library(ggridges)
+
+
+# Reformat to factor
+data = ESM_merged %>%
+  mutate(across(AntPleasure:ConPleasure,
+                function(x) factor(x, 
+                                  levels=c(1,2,3,4,5,6,7),
+                                  ordered=TRUE)))
+
+# Rename levels of the factors
+data = data %>%
+  mutate(across(AntPleasure:ConPleasure,
+                function(x) plyr::revalue(x, c("1"="1 = Not at all", "2"="2", "3"="3", "4"="4", "5"="5", "6"="6", "7"="7 = Very much so"))))
+
+vars_likert = c("AntPleasure","ConPleasure")
+
+plot(likert(data[,vars_likert]), 
+     type="bar")
+
+plot(likert(data[,vars_likert], grouping = data[,"Day"]), legend.position="right",
+     type="bar")
+
+
+data_longer <- data %>%
+  pivot_longer(c(AntPleasure:ConPleasure), names_to = "measure", values_to = "score")
+
+data_percent <- data_longer %>%
+  group_by(measure, score, Day) %>%
+  reframe(N = n()) %>%
+  pivot_wider(id_cols = c(measure, Day), names_from = score, values_from = N) %>%
+  mutate(Total = `1 = Not at all` + `2` + `3` + `4` + `5` + `6` + `7 = Very much so`) %>%
+  pivot_longer(c(`1 = Not at all`:`7 = Very much so`), names_to = "rating") %>%
+  mutate(Percent = (value/Total)*100) %>%
+  mutate(percent_label = format(round(Percent, digits = 1), nsmall = 1)) 
+
+data_percent$rating <- factor(data_percent$rating, levels = rev(c("1 = Not at all", "2","3","4","5","6","7 = Very much so")))
+
+data_percent <- data_percent %>%
+  mutate(Measure = case_when(
+    measure == "AntPleasure" ~ "Anticipation",
+    measure == "ConPleasure" ~ "Consumption"
+  ))
+
+data_percent$Measure <- factor(data_percent$Measure, levels = rev(c("Anticipation", "Consumption")))
+
+
+stacked_bar <- data_percent %>%
+  ggplot(aes(x = Measure, y = Percent, fill = rating)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_brewer(palette = "BrBG", direction = -1) + 
+  coord_flip() +
+  # scale_fill_manual(values=c('#2596BE', '#8225BE', '#D4C443')) + 
+ # geom_text(aes(label = percent_label ), size = 3, position = position_stack(vjust = 0.5), color = "black") +
+  facet_wrap(~Day, ncol = 1, labeller = label_both) + 
+  ggtitle(label = "Daily measures of anticipation and consumption of reward") +
+  theme_minimal() +
+  theme(strip.text.y.right = element_text(angle = 0)) +
+  guides(fill=guide_legend(title="Rating")) +
+  theme(legend.position = "right")
+stacked_bar
+
+  ggsave('Figure2.png', plot=stacked_bar, device = "png", path = '../figures', width=200, dpi = 600, height=150, units="mm")
+
+
+```
+
+#Inspection of ranges and centering variables
+
+```{r}
+#Inspecting range of EEfRT ratios (predictors)
+min(ESM_merged$EEfRT_averaged_lowp) #0
+max(ESM_merged$EEfRT_averaged_lowp) #0.81
+
+min(ESM_merged$EEfRT_averaged_medp) #0
+max(ESM_merged$EEfRT_averaged_medp) #0.975
+
+min(ESM_merged$EEfRT_averaged_highp) #0.04
+max(ESM_merged$EEfRT_averaged_highp) #1.0 
+
+
+#Centering
+# I do not think centering the predictors is necessary - there is a true meaningful 0 (our predictors are ratio variables)
+# #Centering predictors - tetsing the same models but with centered predictors
+# If scale = TRUE, then z-scores are computed
+ESM_merged$EEfRT_averaged_lowp_cen <- scale(ESM_merged$EEfRT_averaged_lowp, center = TRUE, scale = FALSE)
+ESM_merged$EEfRT_averaged_medp_cen <- scale(ESM_merged$EEfRT_averaged_medp, center = TRUE, scale = FALSE)
+ESM_merged$EEfRT_averaged_highp_cen <- scale(ESM_merged$EEfRT_averaged_highp, center = TRUE, scale = FALSE)
+
+```
+
+#Modelling
+
+# Logistic regression 
+- Logistic regression seeks to study and examine the probabilities of an event's occurrence.
+- In our case, the outcome variable is not binary, and so a standard logistic regression is not suitable. A cumulative link mixed model is more appropriate. 
+
+
+#Regarding scaling variables
+I don't think scaling the predictors would be necessary, considering that all three predictors contain the same  format of information. There is a clear meaning of 0 in our case (for the predictors that is) - 0 is a complete absence of hard tasks for the given probbability
+
+
+
+#### Report descriptives
+```{r}
+
+library(plyr)
+agg_data <-  ddply(ESM_merged[,c(4,6:7)], .(subj_day), colwise(mean))
+detach(package:plyr)
+
+agg_data <-  left_join(agg_data,ESM_merged[,c(2,4)], by  = "subj_day")
+
+c1 <- as.data.frame(iccMixed("AntPleasure","ID", agg_data))
+c2 <- as.data.frame(iccMixed("ConPleasure","ID", agg_data))
+
+#agg_data$AntPleasure <- factor(agg_data$AntPleasure)
+  
+MODEL1 <- lmer(AntPleasure~1+(1|ID),data=agg_data)
+fe1 <-as.data.frame(fixef(MODEL1))
+ci1 <- confint(MODEL1)[3,]
+sd1 <- as.data.frame(lme4::VarCorr(MODEL1))$sdcor
+
+MODEL2 <- lmer(ConPleasure~1+(1|ID),data=agg_data)
+fe2 <-as.data.frame(fixef(MODEL2))
+ci2 <- confint(MODEL2)[3,]
+sd2 <- as.data.frame(lme4::VarCorr(MODEL2))$sdcor
+
+
+fes <- rbind(fe1[1,1],fe2[1,1])
+cis <- rbind(ci1,ci2)
+sds <- rbind(sd1,sd2)
+
+iccs <- c(c1[1,3],c2[1,3])
+
+desc_table <- cbind(round(fes, digits = 2),round(cis, digits = 2),round(sds, digits = 2), round(iccs, digits = 2))
+colnames(desc_table) <- c("M","95% CI lower","95% CI upper","SD between-person","SD within-person residual","ICC" )
+rownames(desc_table) <- c("Anticipatory pleasure","Consummatory pleasure")
+desc_table
+write.csv(desc_table,"../figures/table2.csv",row.names = TRUE)
+```
+
+```{r}
+
+#Making sure the outcome variable are ordered factors
+ESM_merged$ConPleasure <- factor(ESM_merged$ConPleasure, ordered = TRUE)
+ESM_merged$AntPleasure <- factor(ESM_merged$AntPleasure, ordered = TRUE)
+```
+
+##### ### Null models #################
+```{r}
+#Fitting the null models
+ant_null <- clmm(AntPleasure ~ 1 + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = "logit")
+
+con_null <- clmm(ConPleasure ~ 1 + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+```
+
+##### ### full models ###########
+```{r}
+#Random intercept models
+#antmod1 <- clmm(AntPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit') #logit link gives us the proportional odds mixed model
+
+#antmod2 <- clmm(AntPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + BAS_Drive + BAS_FS + BAS_RR + BIS + PHQ_TOTAL + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+
+antmod3 <- clmm(AntPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + BAS_Drive + BAS_FS + BAS_RR + PHQ_TOTAL + MASQ_AD + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+
+#conmod1 <- clmm(ConPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+
+#conmod2 <- clmm(ConPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + BAS_Drive + BAS_FS + BAS_RR + BIS + PHQ_TOTAL + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+
+conmod3 <- clmm(ConPleasure ~ EEfRT_averaged_lowp + EEfRT_averaged_medp + EEfRT_averaged_highp + BAS_Drive + BAS_FS + BAS_RR + PHQ_TOTAL + MASQ_AD + (1|ID) + (1|subj_day), data = ESM_merged, na.action = "na.omit", Hess = TRUE, link = 'logit')
+
+```
+
+# Comparing against the null
+```{r}
+#anova(ant_null, antmod1) # the full model does not seem to be much better, no significant difference
+anova(ant_null, antmod3) # the full model does is better
+
+#anova(con_null, conmod1) # the full model does not seem to be much better, no significant difference
+anova(con_null, conmod3)
+
+#summary(antmod1)
+sum_ant <- summary(antmod3)
+#summary(conmod1)
+sum_con <- summary(conmod3)
+
+#Confidence intervals
+#confint(antmod1) #Both models include 0 in the confidence intervals
+CI_ant <- confint(antmod3) #Both models include 0 in the confidence intervals
+#confint(conmod1)
+CI_con <- confint(conmod3)
+
+#calculate odds ratios https://marissabarlaz.github.io/portfolio/ols/
+OR_ant <- exp(coef(antmod3))
+OR_con <- exp(coef(conmod3))
+
+ant_table <- cbind(as.data.frame(round(sum_ant$coefficients[7:14,c(1,2)],digits=2)),as.data.frame(round(sum_ant$coefficients[7:14,4], digits = 3)),as.data.frame(round(CI_ant[7:14,], digits=2)), as.data.frame(round(OR_ant[7:14],digits = 2)))
+ant_table
+
+con_table <- cbind(as.data.frame(round(sum_con$coefficients[7:14,c(1,2)],digits=2)),as.data.frame(round(sum_con$coefficients[7:14,4], digits = 3)),as.data.frame(round(CI_con[7:14,], digits=2)),as.data.frame(round(OR_con[7:14],digits = 2)))
+con_table
+
+
+```
+
+-
+
+

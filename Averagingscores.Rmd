@@ -1,0 +1,473 @@
+---
+title: "Sensitivitty_rew_startup - correlation and data cleaning"
+author: "Liv Tollånes"
+date: "2023-02-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load("tidyverse", "ggpubr", "psych", "Hmisc", "corrplot", "rstatix")
+
+library(ggplot2)
+
+```
+
+
+## Task Nr.1 - Avergaing Scores across POS/NEG CBM training performance
+- Average participants' performance across the 2 EEfRt tasks to create three averaged scores: one for low, one for medium, and one for high probability trials). 
+- Then correlate with baseline measures.
+
+### Data loading and format alterations
+```{r}
+#Loading in data
+vars_CBM <- read.csv("./data/CBM_variables.csv")
+df_CBM <- read.csv("./data/CBM_data.csv")
+
+
+#Creating subset for just for better overview
+EEfRT_sub <- df_CBM %>% dplyr::select(c((1:7), contains("EEfRT")))
+
+length(unique(df_CBM $participant_id)) #81 unique subs
+
+# Select only IDs with exclude values 0. 2 rows were dropped - so now there are 79 participants in the df
+df_CBM  <- subset(df_CBM ,exclude == 0 )
+
+# remove additional subject ID with missing data
+df_CBM <- df_CBM %>%
+  filter(participant_id != 512) %>%
+  droplevels()
+
+#Replace weird column values with NA
+df_CBM [df_CBM  == "#NULL!"] <- NA
+
+df_CBM <- as_tibble(df_CBM )
+
+
+# Make all EEfRT columns numeric
+# Pos high prob
+df_CBM $POS_EEfRT_prop_hard_choice_highprob <- as.numeric(df_CBM $POS_EEfRT_prop_hard_choice_highprob, na.rm = T)
+is.numeric(df_CBM $POS_EEfRT_prop_hard_choice_highprob)
+
+#Pos med prob
+df_CBM $POS_EEfRT_prop_hard_choice_medprob <- as.numeric(df_CBM $POS_EEfRT_prop_hard_choice_medprob, na.rm = T)
+is.numeric(df_CBM $POS_EEfRT_prop_hard_choice_medprob)
+
+#POS low prob
+df_CBM $POS_EEfRT_prop_hard_choice_lowprob <- as.numeric(df_CBM $POS_EEfRT_prop_hard_choice_lowprob, na.rm = T)
+is.numeric(df_CBM $POS_EEfRT_prop_hard_choice_lowprob)
+
+#NEG high prob
+df_CBM $NEG_EEfRT_prop_hard_choice_highprob <- as.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_highprob, na.rm = T)
+is.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_highprob)
+
+#NEG med prob
+df_CBM $NEG_EEfRT_prop_hard_choice_medprob <- as.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_medprob, na.rm = T)
+is.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_medprob)
+
+#NEG low prob
+df_CBM $NEG_EEfRT_prop_hard_choice_lowprob <- as.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_lowprob, na.rm = T)
+is.numeric(df_CBM $NEG_EEfRT_prop_hard_choice_lowprob)
+
+#Create Average column (average of positive and negative EEfRT scores averaged together into one EEfRT total score)
+df_CBM$EEfRT_averaged_lowp <- rowMeans(df_CBM [ ,c("POS_EEfRT_prop_hard_choice_lowprob", "NEG_EEfRT_prop_hard_choice_lowprob")])
+df_CBM$EEfRT_averaged_medp <- rowMeans(df_CBM [ ,c("POS_EEfRT_prop_hard_choice_medprob", "NEG_EEfRT_prop_hard_choice_medprob")])
+df_CBM$EEfRT_averaged_highp <- rowMeans(df_CBM [ ,c("POS_EEfRT_prop_hard_choice_highprob", "NEG_EEfRT_prop_hard_choice_highprob")])
+
+df_CBM$EEfRT_diff_lowp <- df_CBM$POS_EEfRT_prop_hard_choice_lowprob - df_CBM$NEG_EEfRT_prop_hard_choice_lowprob
+df_CBM$EEfRT_diff_medp <- df_CBM$POS_EEfRT_prop_hard_choice_medprob - df_CBM$NEG_EEfRT_prop_hard_choice_medprob
+df_CBM$EEfRT_diff_highp <- df_CBM$POS_EEfRT_prop_hard_choice_highprob - df_CBM$NEG_EEfRT_prop_hard_choice_highprob
+
+#Saving the data in a finished preprocessing file - to not repeat the above code every time
+write.csv(df_CBM, "./data/preprocessed.csv", row.names=FALSE)
+
+```
+
+
+```{r}
+# Loading in preprocessed data - when running code again
+ df <- read.csv("./data/preprocessed.csv")
+```
+
+
+#RECODE SUMMARY SCORES FOR BIS/BAS
+See OneDrive 'BISBAS_itemsscoring' BIS/BAS Carver, C. S., & White, T. L. (1994).  
+
+Items other than 2 and 22 are reverse-scored. 
+BAS Drive:  3, 9, 12, 21  
+BAS Fun Seeking:  5, 10, 15, 20  
+BAS Reward Responsiveness:  4, 7, 14, 18, 23 
+BIS:  2, 8, 13, 16, 19, 22, 24 
+Items 1, 6, 11, 17,  are fillers.  
+
+```{r recode bis bas}
+
+df$BIS <- (as.numeric(df$BB_NoFear)) + 
+              (5-as.numeric(df$BB_Criticism)) +
+              (5-as.numeric(df$BB_WorryAngry)) +
+              (5-as.numeric(df$BB_ThinkPleasant)) +
+              (5-as.numeric(df$BB_WorryPoor)) +
+              (as.numeric(df$BB_FewFears)) +
+              (5-as.numeric(df$BB_Mistakes))
+
+df$BAS_Drive <- (5-df$BB_GoOutofWay) + 
+              (5-df$BB_GoGetIt) +
+              (5-df$BB_MoveRightAway) +
+              (5-df$BB_HoldsBarred)
+
+df$BAS_FS <- (5-df$BB_TryNew) +
+              (5-df$BB_DoFun) +
+              (5-df$BB_SpurMoment) +
+              (5-df$BB_CraveExcitement)
+
+df$BAS_RR <- (5-df$BB_KeepAtIt) +
+              (5-df$BB_Energized) +
+              (5-df$BB_Excited) +
+              (5-df$BB_AffectStrong) +
+              (5-df$BB_Contest)
+
+write.csv(df_CBM, "./data/preprocessed.csv", row.names=FALSE)
+```
+
+#Demographics
+```{r}
+
+
+
+df %>%
+  summarise(Mean_age = mean(Age), SD_age = sd(Age))
+
+df %>%
+  group_by(Gender) %>%
+  summarise(N = n()) %>%
+  summarise(N = N, percent = N/sum(N))
+
+#Education
+#0=high school; 1=college grad; 2=postgrad; 3=PhD or higher
+
+df <- df %>%
+  mutate(Education_recoded = case_when(
+    Education == 0 ~ "high school",
+    Education == 1 ~ "undergraduate degree",
+    Education == 2 ~ "postgraduate degree",
+    Education == 3 ~ "postgraduate degree",
+    TRUE ~ "Missing"
+  )) 
+
+df %>%
+  group_by(Education_recoded) %>%
+  summarise(N = n()) %>%
+  summarise(Education = Education_recoded, N = N, percent = N/sum(N))
+
+#0=White british; 
+#1=White other; 
+#2=Black/Black british; 
+#3=Asian/Asian british; 
+#4=Gypsy/traveller/Irish traveller; 
+#5=mixed/multiple ethnic groups; 
+#6=other
+
+df %>%
+  group_by(Ethnicity) %>%
+  summarise(N = n()) %>%
+  summarise(Ethnicity = Ethnicity, N = N, percent = N/sum(N))
+
+
+```
+
+```{r }
+#REVERSE SCORE ANHEDONIA
+df$MASQ_AD <- 40 - (df$MASQ_AD - 10)
+```
+
+#Baseline symptoms
+```{r}
+
+df %>%
+  reframe(N = sum(!is.na(PHQ_TOTAL)), Mean = mean(PHQ_TOTAL,na.rm = TRUE), SD = sd(PHQ_TOTAL,na.rm = TRUE), min = min(PHQ_TOTAL,na.rm = TRUE), max = max(PHQ_TOTAL,na.rm = TRUE))
+
+
+df %>%
+  reframe(N = sum(!is.na(MASQ_AD)), Mean = mean(MASQ_AD, na.rm = TRUE), SD = sd(MASQ_AD, na.rm = TRUE), min = min(MASQ_AD, na.rm = TRUE), max = max(MASQ_AD, na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(TEPS_ANT)), Mean = mean(TEPS_ANT,na.rm = TRUE), SD = sd(TEPS_ANT,na.rm = TRUE), min = min(TEPS_ANT,na.rm = TRUE), max = max(TEPS_ANT,na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(TEPS_CON)), Mean = mean(TEPS_CON,na.rm = TRUE), SD = sd(TEPS_CON,na.rm = TRUE), min = min(TEPS_CON,na.rm = TRUE), max = max(TEPS_CON,na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(BIS)), Mean = mean(BIS,na.rm = TRUE), SD = sd(BIS,na.rm = TRUE), min = min(BIS,na.rm = TRUE), max = max(BIS,na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(BAS_Drive)), Mean = mean(BAS_Drive,na.rm = TRUE), SD = sd(BAS_Drive,na.rm = TRUE), min = min(BAS_Drive,na.rm = TRUE), max = max(BAS_Drive,na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(BAS_FS)), Mean = mean(BAS_FS,na.rm = TRUE), SD = sd(BAS_FS,na.rm = TRUE), min = min(BAS_FS,na.rm = TRUE), max = max(BAS_FS,na.rm = TRUE))
+
+df %>%
+  reframe(N = sum(!is.na(BAS_RR)), Mean = mean(BAS_RR, na.rm = TRUE), SD = sd(BAS_RR,na.rm = TRUE), min = min(BAS_RR,na.rm = TRUE), max = max(BAS_RR,na.rm = TRUE))
+
+
+df %>%
+  reframe(N = sum(!is.na(VVIQ_TOTAL)), Mean = mean(VVIQ_TOTAL,na.rm = TRUE), SD = sd(VVIQ_TOTAL,na.rm = TRUE), min = min(VVIQ_TOTAL,na.rm = TRUE), max = max(VVIQ_TOTAL,na.rm = TRUE))
+```
+## Hypothesis 1: Sanity checks
+```{r}
+
+df_CBM <- df_CBM %>%
+  filter(participant_id != 512) %>%
+  droplevels()
+
+
+# CBM training score
+hist(as.numeric(df_CBM$POSCBMTrainingaccuracy))
+hist(as.numeric(df_CBM$NEGCBMTrainingaccuracy))
+
+df_CBM %>%
+  reframe(mean_pos = mean(as.numeric(POSCBMTrainingaccuracy), na.rm = TRUE), sd_pos = sd(as.numeric(POSCBMTrainingaccuracy), na.rm = TRUE), mean_neg = mean(as.numeric(NEGCBMTrainingaccuracy), na.rm = TRUE),sd_neg = sd(as.numeric(NEGCBMTrainingaccuracy), na.rm = TRUE))
+
+
+# Recognition test
+
+df_CBM %>%
+  reframe(mean_pos = mean(as.numeric(RT_POS_TRAINING_IDX), na.rm = TRUE), sd_pos = sd(as.numeric(RT_POS_TRAINING_IDX), na.rm = TRUE), mean_neg = mean(as.numeric(RT_NEG_TRAINING_IDX), na.rm = TRUE),sd_neg = sd(as.numeric(RT_NEG_TRAINING_IDX), na.rm = TRUE))
+
+
+hist(as.numeric(df_CBM$RT_POS_TRAINING_IDX), col = 'coral2')
+hist(as.numeric(df_CBM$RT_NEG_TRAINING_IDX), col = 'steelblue')
+
+t.test(as.numeric(df_CBM$RT_POS_TRAINING_IDX),as.numeric(df_CBM$RT_NEG_TRAINING_IDX), paired = TRUE)
+  
+```
+
+o	3. EEfRT task performance hypotheses: a) main effect of training condition: more ‘hard trial’ choices following positive training vs. negative training b) interaction effect with probability level: differences in positive vs. negative training will be modified by probability level (larger differences at lower probabilities) 
+
+## Hypothesis 1: Main effect
+```{r}
+
+df_hyp1 <- df %>%
+  dplyr::select(c(1:7),POS_EEfRT_prop_hard_choice_lowprob,POS_EEfRT_prop_hard_choice_medprob,POS_EEfRT_prop_hard_choice_highprob,NEG_EEfRT_prop_hard_choice_lowprob,NEG_EEfRT_prop_hard_choice_medprob, NEG_EEfRT_prop_hard_choice_highprob)
+
+
+df_hyp1_long <-df_hyp1 %>%
+  pivot_longer(cols = c(8:13), names_to = c("training","difficulty"), names_sep = "_EEfRT_prop_hard_choice_" )
+
+
+res.aov <- anova_test(data = df_hyp1_long, dv = value, wid = participant_id, within = c(training,difficulty))
+
+res.aov <- anova_test(data = df_hyp1_long, dv = value, wid = participant_id, within = c(training,difficulty), covariate = c(Gender, Age))
+
+as.data.frame(get_anova_table(res.aov))
+
+```
+
+
+
+#Descriptive stats
+
+```{r}
+# Subset all columns containing EEfRT and the baseline measures - to make the task of correlations easier to overview
+# Baseline measures include all MASQ-, TEPS, and BIS/BAs-columns
+sub <- df %>% dplyr::select(c((1:11), EEfRT_HighProb_DiffScore, EEfRT_MedProb_DiffScore, EEfRT_LowProb_DiffScore, RT_Diff_Score, TEPS_ANT, TEPS_CON, PHQ_TOTAL, BAS_Drive, BAS_FS, BAS_RR, BIS, VVIQ_TOTAL, MASQ_AD))
+
+#Descriptive stats - describing the data sample
+sapply(sub, class)
+sub <- na.omit(sub)
+
+#Number of participants in each gender group
+sub %>% count(Gender, sort = TRUE) #45 women, 18 men
+
+#Number of participants in each nationality group
+sub %>% count(Nationality, sort = TRUE) #There are 24 different nationalities, with most people coming from Britain
+
+```
+
+### Correlate with baseline measures 
+- Are there any relationships between the baseline measures and the averaged EEfRT scores?
+- Test strength of association between variables
+
+## Hypothesis 2a: 
+Those with higher anhedonia, lower reward sensitivity and higher symptoms of depression will show reduced response to training (smaller differences in performance on recognition test and EEfRT task between training types) and an overall lower choice of ‘high effort’ trials on the EEfRT task. 
+
+df$TEPS_ANT 
+df$TEPS_CON
+
+df$BAS_RR
+df$BAS_FS
+df$BAS_Drive
+
+df$PHQ_TOTAL
+
+df$RT_Diff_Score
+
+df$EEfRT_HighProb_DiffScore
+df$EEfRT_MedProb_DiffScore
+df$EEfRT_LowProb_DiffScore
+
+df$VVIQ_TOTAL
+
+
+```{r}
+# #Removing non-useful columns in order to make the corr matrix work easily
+sub$exclude <- NULL 
+sub$participant_id <- NULL
+sub$Nationality <- NULL
+sub$Gender <- NULL
+
+any(is.na(sub)) #contains NAs - need to remove these to compute correlations
+sub[!complete.cases(sub), ]
+
+sub <- na.omit(sub) #no NAs now
+
+#Testing the class of all variables at once
+sapply(sub, class)
+
+#Change all baseline measures to numeric
+sub <- sub %>% mutate_at(c(4:18), as.numeric) #Remember to update the number specified according to the number of columns dropped
+
+
+# Asummption of normally distributed data for pearson's correlation test
+shapiro.test(sub$EEfRT_HighProb_DiffScore) # p<.05 - not normal
+shapiro.test(sub$EEfRT_MedProb_DiffScore) # p >.05  normal
+shapiro.test(sub$EEfRT_LowProb_DiffScore) #p<.05 - not normal
+shapiro.test(sub$RT_Diff_Score) #p>.05 - normal
+
+hist(sub$EEfRT_LowProb_DiffScore, col = 'coral2')
+hist(sub$EEfRT_HighProb_DiffScore, col = 'steelblue')
+hist(sub$EEfRT_MedProb_DiffScore)
+
+hist(sub$RT_Diff_Score)
+```
+
+
+```{r}
+#### Correlation Work
+
+#creating a subset for correlation work
+corsub <- sub %>% dplyr::select(c(, c(8:17,19,20)))
+corsub <- na.omit(corsub)
+sapply(corsub, class)
+corsub_matrix <- as.matrix(corsub)
+
+
+#create Spearman correlation matrix
+corr_mat <-  cor(corsub, method="spearman")
+
+as.data.frame(round(corr_mat, digits = 2))
+
+#Correlation matrix - using nonparametric Spearman correlation test due to non-normal variables, and not a complete set of continuous variables
+#Obtains p-values as well 
+spearman_corr <- rcorr(corsub_matrix, type = c("spearman"))
+
+as.data.frame(round(spearman_corr$r, digits=2))
+as.data.frame(round(spearman_corr$P, digits=3))
+
+#plotting the correlation matrix
+corrplot(corr_mat, method = c("number"), type = "upper") #With specific numbers
+
+corrplot(spearman_corr$r, method = c("number"), addCoef.col ='black',type = "upper") #With specific numbers
+
+corrplot.mixed(spearman_corr$r, addCoef.col = 'black', order = 'AOE')
+
+corrplot(spearman_corr$r, addCoef.col = 'black', tl.col="black", type = 'upper', number.cex = 0.8,) #With circles to represent correlations instead
+corrplot(spearman_corr$r, method = "number", addCoef.col = 'black', tl.col="black", type = 'upper', number.cex = 0.5, number.digits = 2, diag = FALSE) #With 
+
+
+corrplot.mixed(spearman_corr$r, lower.col = "black", number.cex = .7)
+```
+
+# ----- Generate heatmaps -----
+
+```{r}
+
+corrs <- psych::corr.test(corsub_matrix, method = "spearman")
+cor_values <- as.data.frame(corrs$r)
+corr_values <- corrr::as_cordf(cor_values)
+clean_correlations <- corrr::shave(corr_values)
+
+# pvalue table to connect significances to 
+p_values <- as.data.frame(corrs$p)
+corrp_values <- corrr::as_cordf(p_values)
+
+#cleaned p value table
+clean_pvalues <- corrr::shave(corrp_values)
+star_pvalues <- ifelse(clean_pvalues < .05, "*", "")
+clean_pvalues[,2:13] <- star_pvalues[,2:13]
+  
+  clean_correlations2 <- clean_correlations[2:12,1:12]
+  star_pvalues2 <- clean_pvalues[2:12,1:12]
+  
+  reshape_r <- reshape2::melt(clean_correlations2, id.vars = "term")
+  reshape_p <-reshape2::melt(star_pvalues2, id.vars="term")
+  
+  reshape_r$value <- as.numeric(reshape_r$value)
+  reshape_r$value_label <- sprintf("%0.2f",round(reshape_r$value, digits =2))
+  reshape_r$value_label <- sapply(reshape_r$value_label, as.character)
+  reshape_r$value_label <- paste(reshape_r$value_label, reshape_p$value, sep="")
+  reshape_r$value_label <- str_replace(reshape_r$value_label, "NANA","")
+
+  reshape_r <- reshape_r %>%
+    mutate(variable2 = case_when(
+      variable == "EEfRT_LowProb_DiffScore" ~ "EEfRT: low probability (diff)",
+      variable == "EEfRT_MedProb_DiffScore" ~ "EEfRT: med probability (diff)",
+      variable == "EEfRT_HighProb_DiffScore" ~ "EEfRT: high probability (diff)",
+      variable == "RT_Diff_Score" ~ "RT Index (diff)",
+      variable == "TEPS_ANT" ~ "TEPS: anticipation",
+      variable == "TEPS_CON" ~ "TEPS: consumption",
+      variable == "PHQ_TOTAL" ~ "PHQ-9",
+      variable == "BAS_Drive" ~ "BAS: drive",
+      variable == "BAS_FS" ~ "BAS: fun seeking",
+      variable == "BAS_RR" ~ "BAS: reward responsiveness",
+      variable == "VVIQ_TOTAL" ~ "VVIQ",
+      variable == "MASQ_AD" ~ "MASQ: Anhedonic depression"
+    )) %>%
+    mutate(term2 = case_when(
+      term == "EEfRT_MedProb_DiffScore" ~ "EEfRT: med probability (diff)",
+      term == "EEfRT_LowProb_DiffScore" ~ "EEfRT: low probability (diff)",
+      term == "RT_Diff_Score" ~ "RT Index (diff)",
+      term == "TEPS_ANT" ~ "TEPS: anticipation",
+      term == "TEPS_CON" ~ "TEPS: consumption",
+      term == "PHQ_TOTAL" ~ "PHQ-9",
+      term == "BAS_Drive" ~ "BAS: drive",
+      term == "BAS_FS" ~ "BAS: fun seeking",
+      term == "BAS_RR" ~ "BAS: reward responsiveness",
+      term == "VVIQ_TOTAL" ~ "VVIQ",
+      term == "MASQ_AD" ~ "MASQ: Anhedonic depression"
+    ))
+  
+  
+  reshape_r$term2 <- factor(reshape_r$term2, levels = (c("EEfRT: med probability (diff)", "EEfRT: low probability (diff)", "RT Index (diff)", "TEPS: anticipation", "TEPS: consumption", "PHQ-9", "BAS: drive", "BAS: fun seeking", "BAS: reward responsiveness", "VVIQ", "MASQ: Anhedonic depression")))
+  
+    reshape_r$variable2 <- factor(reshape_r$variable2, levels =(c( "EEfRT: high probability (diff)","EEfRT: med probability (diff)", "EEfRT: low probability (diff)", "RT Index (diff)", "TEPS: anticipation", "TEPS: consumption", "PHQ-9", "BAS: drive", "BAS: fun seeking", "BAS: reward responsiveness", "VVIQ", "MASQ: Anhedonic depression")))
+  
+ 
+  
+ corrplot <-  ggplot(data=reshape_r, mapping = aes(term2, variable2, fill = value)) +
+    #facet_grid(dimension ~ . , scales = "free", space = "free") +
+    geom_tile(stat="identity", width=1, height=1) + xlab(label = " ") +ylab(label="")+
+    geom_text(aes(label=value_label),size=3)+scale_x_discrete(position = "bottom") +scale_y_discrete(position = "right") +
+    scale_fill_distiller( palette = "BrBG", na.value = 'white', direction = 1)+
+    theme_minimal()+theme(legend.position="left")+ labs(fill = "r value")+
+    theme(text = element_text(size=12),axis.text.x = element_text(angle = 45, vjust = 1,hjust=1), panel.border = element_blank(),
+          panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "white"))
+ 
+ corrplot
+  
+  ggsave('Figure1.png', plot=corrplot, device = "png", path = '/Users/katherineyoung/Documents/SilverCloud docs/figures', width=200, height=150, dpi = 600, units="mm")
+
+
+```
+  
+  
+
+# Concluding remarks on correlation analyis
+Output of the correlation analysis
+- For the high and medium probability categories, no relationship between the averaged EEfRT scores and baseline measures were found (p>.05)
+- For the low probability category, a small positive correlation (0.29) was found between the averaged EEfRT score and the MASQ.AA measure (p<0.05). Otherwise, no significant correlations were found for this probability category and the rest of the measure
+- Regarding the predictor variables - there seems to be a small positive correlation between the low and medium probability EEfRT scores (p<0.05), and a mmoderate positive correlation between the medium and the high probability category
+
+
+
+
